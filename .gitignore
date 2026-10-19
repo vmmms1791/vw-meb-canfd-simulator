@@ -1,0 +1,48 @@
+# Zephyr / Build
+build/
+*.bin
+*.hex
+*.elf
+*.map
+*.o
+*.a
+*.img
+zephyr/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Artifacts
+*.artifact
+*.zip
+*.tar.gz
+
+# Local config
+local.conf
+prj_local.conf
