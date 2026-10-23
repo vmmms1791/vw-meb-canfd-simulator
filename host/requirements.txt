@@ -1,0 +1,8 @@
+pyserial>=3.5
+crcmod>=1.7
+pyyaml>=6.0
+rich>=13.0
+pandas>=2.0
+cantools>=42.0
+pytest>=7.0
+pytest-mock>=3.12

@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./host
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run linting (ruff)
+        run: |
+          pip install ruff
+          ruff check . --exclude tests/
+
+      - name: Run type checking (pyright)
+        run: |
+          pip install pyright
+          pyright . --ignoreexternal
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short
+
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check documentation files exist
+        run: |
+          test -f docs/meb_can_ids.md
+          test -f docs/canfd_protocol.md
+          test -f docs/uds_services.md
+          test -f docs/hardware_setup.md
+          test -f README.md
+          test -f ARCHITECTURE_PLAN.md
+          test -f host/dbc/vw_meb_cantools.dbc
+          echo "All documentation files present"
+
+  verify-structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify repository structure
+        run: |
+          # Required directories
+          test -d host
+          test -d host/tests
+          test -d host/dbc
+          test -d host/scripts
+          test -d docs
+          test -d hardware
+          test -d .github/workflows
+
+          # Required files
+          test -f host/cli.py
+          test -f host/capture.py
+          test -f host/poll.py
+          test -f host/analyzer.py
+          test -f host/requirements.txt
+          test -f host/scripts/run_capture.bat
+          test -f host/tests/test_slcan_client.py
+          test -f host/tests/test_capture.py
+          test -f host/tests/test_analyzer.py
+
+          echo "Repository structure verified"

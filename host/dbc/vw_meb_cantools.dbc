@@ -1,0 +1,225 @@
+VERSION "1.0"
+
+NS_:
+  BA_
+  BA_DEF_
+  BA_DEF_DEF_
+  BU_
+  BU_BO_TX_BU_
+  BO_
+  CAT_
+  CAT_DEF_
+  CM_
+  ENV_VAR_DATA_
+  EV_DATA_
+  ENV_VAR_
+  FILTER
+  NS_DESC_
+  SIG_GROUP_
+  SIG_GROUP_ARR_
+  SIG_VALTYPE_
+  SIG_VAL_
+  VAL_
+  VAL_TABLE_
+
+BS_:
+
+BU_: Vector__XXX
+
+# VW MEB CAN IDs from docs/meb_can_ids.md
+# Sources: opendbc (MIT), spot2000 CSV, DCDC-Hacking logs, SSP 747
+# Confidence: ✅ ЛОГ = real capture, 📘 DBC = opendbc, 📋 CSV = spot2000, ❓ UNKNOWN = seen but undecoded
+
+# ============================================================
+# Battery (BMS) - Broadcast Messages
+# ============================================================
+
+BO_ 1442 BMS_04: 8 Vector__XXX
+ SG_ BMS_Mode : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ BMS_Error : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ BMS_Shutdown : 16|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ BMS_Capacity : 24|16@1+ (0.1,0) [0|6553.5] "Ah" Vector__XXX
+
+BO_ 1452 HVEM_02: 8 Vector__XXX
+ SG_ HV_Consumer_Current : 0|16@1+ (0.1,0) [0|6553.5] "A" Vector__XXX
+ SG_ HV_Useful_Energy : 16|32@1+ (1,0) [0|4294967295] "Wh" Vector__XXX
+
+BO_ 247 MEB_HVEM_02: 8 Vector__XXX
+ SG_ CNT : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 1283 HVK_01: 8 Vector__XXX
+ SG_ Target_BMS_Mode : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Target_DCDC_Mode : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Target_Compressor_Mode : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 380225246 Battery_Temperatures: 8 Vector__XXX
+ SG_ Max_Cell_Temp : 0|16@1+ (0.1,-40) [-40|6513.5] "degC" Vector__XXX
+ SG_ Min_Cell_Temp : 16|16@1+ (0.1,-40) [-40|6513.5] "degC" Vector__XXX
+
+BO_ 315370706 Battery_Heating_Status: 8 Vector__XXX
+ SG_ Heating_Active : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Requested_Heating_Power : 8|16@1+ (10,0) [0|655350] "W" Vector__XXX
+ SG_ Actual_Heating_Power : 24|16@1+ (10,0) [0|655350] "W" Vector__XXX
+
+BO_ 190 MEB_HVEM_01: 48 Vector__XXX
+ SG_ Motor_Speed : 0|16@1+ (1,0) [0|65535] "rpm" Vector__XXX
+ SG_ Motor_Power : 16|16@1+ (100,0) [0|6553500] "W" Vector__XXX
+
+# ============================================================
+# Battery UDS - Request/Response (29-bit Extended)
+# ============================================================
+
+BO_ 402253691 Battery_UDS_Request: 8 Vector__XXX
+# CAN ID 0x17FC007B - Request to Battery (BMS)
+# UDS 0x22 ReadDataByIdentifier for 142 parameters
+
+BO_ 402253755 Battery_UDS_Response: 8 Vector__XXX
+# CAN ID 0x17FE007B - Response from Battery (BMS)
+
+# ============================================================
+# Thermal / Climate - Broadcast (11-bit Standard)
+# ============================================================
+
+BO_ 949 Klima_11: 8 Vector__XXX
+ SG_ AC_Status : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Compressor_Speed : 8|16@1+ (10,0) [0|655350] "rpm" Vector__XXX
+ SG_ AC_Warnings : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 1640 Klima_12: 8 Vector__XXX
+ SG_ Seat_Heating_Buttons : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Aux_Heater_Enable : 8|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Defog_Status : 9|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1505 Klima_Sensor_02: 8 Vector__XXX
+ SG_ Outside_Temp : 0|16@1+ (0.1,-40) [-40|6513.5] "degC" Vector__XXX
+ SG_ Heater_Valve_Status : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Coolant_Pump_Status : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Compressor_Clutch : 32|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1513 Klima_Sensor_04: 8 Vector__XXX
+ SG_ Refrigerant_Pressure : 0|16@1+ (10,0) [0|655350] "Pa" Vector__XXX
+ SG_ Ionizer_Status : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+
+# Thermal UDS (11-bit, DIFFERENT from Battery!)
+BO_ 1862 Climate_UDS_Request: 8 Vector__XXX
+# CAN ID 0x746 - Request to Climate
+
+BO_ 1968 Climate_UDS_Response: 8 Vector__XXX
+# CAN ID 0x7B0 - Response from Climate
+
+# ============================================================
+# Charging - Broadcast (29-bit Extended)
+# ============================================================
+
+BO_ 315370704 Charging_Dynamics: 8 Vector__XXX
+ SG_ Max_Charge_Current : 0|16@1+ (0.1,0) [0|6553.5] "A" Vector__XXX
+ SG_ Max_Charge_Power : 16|16@1+ (100,0) [0|6553500] "W" Vector__XXX
+
+BO_ 442159538 Charging_Optimization: 8 Vector__XXX
+ SG_ Charge_Temp_Status : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+# ============================================================
+# DC-DC Converter - Broadcast (11-bit)
+# ============================================================
+
+BO_ 1485 DCDC_03: 8 Vector__XXX
+ SG_ DCDC_Error : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Peak_Current_Available : 8|16@1+ (0.1,0) [0|6553.5] "A" Vector__XXX
+ SG_ DCDC_Temperature : 24|16@1+ (0.1,-40) [-40|6513.5] "degC" Vector__XXX
+ SG_ HV_Shutdown : 40|1@1+ (1,0) [0|1] "" Vector__XXX
+
+# DC-DC UDS (29-bit Extended)
+BO_ 402253753 DCDC_UDS_Request: 8 Vector__XXX
+# CAN ID 0x17FC00B9 - Request to DC-DC
+
+BO_ 402253817 DCDC_UDS_Response: 8 Vector__XXX
+# CAN ID 0x17FE00B9 - Response from DC-DC
+
+# ============================================================
+# Gateway / Terminal Status (11-bit)
+# ============================================================
+
+BO_ 960 Klemmen_Status_01: 8 Vector__XXX
+ SG_ Terminal_15 : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Terminal_50 : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Terminal_S : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Terminal_X : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ BCM_Remotestart_Betrieb : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1420 Klemmen_Steuerung_01: 8 Vector__XXX
+ SG_ Terminal_Control : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ ELV_Lock : 8|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Ignition_Suppress : 9|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 987 Gateway_72: 8 Vector__XXX
+ SG_ BCM_Status_Alt : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Lock_Status_Alt : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Wiper_Status_Alt : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 988 Gateway_73: 8 Vector__XXX
+ SG_ Transmission_Status : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ EPB_Status : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Unknown_Field_1 : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Unknown_Field_2 : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+
+# ============================================================
+# DC-DC Stand IDs (NOT on vehicle OBD - from DCDC-Hacking logs)
+# ============================================================
+
+BO_ 686 DC_DC_Stand_2AE: 8 Vector__XXX
+BO_ 1012 DC_DC_Stand_3F4: 8 Vector__XXX
+BO_ 527 DC_DC_Stand_20F: 8 Vector__XXX
+BO_ 625 DC_DC_Stand_271: 8 Vector__XXX
+BO_ 1467 DC_DC_Stand_5BB: 8 Vector__XXX
+
+BO_ 452985017 DC_DC_Stand_1B0000B9: 8 Vector__XXX
+# CAN ID 0x1B0000B9 - Tester request to DC-DC (stand)
+
+BO_ 399048377 DC_DC_Stand_17F000B9: 8 Vector__XXX
+# CAN ID 0x17F000B9 - DC-DC variant address (stand)
+
+# ============================================================
+# Note: ODX Diagnostic Address for DC-DC is 8105 (NOT a CAN ID)
+# ============================================================
+
+BA_DEF_ "GenMsgCycleTime" INT 0 65535
+BA_DEF_ "GenMsgSendType" ENUM "Cyclic","CyclicIfActive","Spontaneous","OnRequest"
+BA_DEF_ BO_ "GenMsgCycleTime" INT
+BA_DEF_ BO_ "GenMsgSendType" ENUM
+
+BA_DEF_DEF_ "GenMsgCycleTime" 100
+BA_DEF_DEF_ "GenMsgSendType" "Cyclic"
+
+CM_ BO_ 1442 "BMS_04: BMS status broadcast (opendbc)"
+CM_ BO_ 1452 "HVEM_02: HV energy management (opendbc)"
+CM_ BO_ 247 "MEB_HVEM_02: Counter only (DCDC-Hacking log: 7419 frames)"
+CM_ BO_ 1283 "HVK_01: HV coordinator targets (DCDC-Hacking log: 737 frames)"
+CM_ BO_ 380225246 "Battery_Temperatures: Max/min cell temp (opendbc)"
+CM_ BO_ 315370706 "Battery_Heating_Status: Heating power (opendbc)"
+CM_ BO_ 190 "MEB_HVEM_01: Motor speed/power multi-frame (opendbc)"
+CM_ BO_ 402253691 "Battery UDS Request 0x17FC007B (spot2000 CSV: 142 params)"
+CM_ BO_ 402253755 "Battery UDS Response 0x17FE007B (spot2000 CSV)"
+CM_ BO_ 949 "Klima_11: AC status, compressor (opendbc)"
+CM_ BO_ 1640 "Klima_12: Seat heating, aux heater (opendbc)"
+CM_ BO_ 1505 "Klima_Sensor_02: Outside temp, valves, pump (opendbc)"
+CM_ BO_ 1513 "Klima_Sensor_04: Refrigerant pressure, ionizer (opendbc)"
+CM_ BO_ 1862 "Climate UDS Request 0x746 (spot2000 CSV: 11-bit!)"
+CM_ BO_ 1968 "Climate UDS Response 0x7B0 (spot2000 CSV)"
+CM_ BO_ 315370704 "Charging_Dynamics: Max charge current/power (opendbc)"
+CM_ BO_ 442159538 "Charging_Optimization: Charge temp status (opendbc)"
+CM_ BO_ 1485 "DCDC_03: Errors, peak current, temp, HV shutdown (opendbc + log 162 frames)"
+CM_ BO_ 402253753 "DC-DC UDS Request 0x17FC00B9 (spot2000 CSV)"
+CM_ BO_ 402253817 "DC-DC UDS Response 0x17FE00B9 (spot2000 CSV)"
+CM_ BO_ 960 "Klemmen_Status_01: Terminal 15/50/S/X + Remote Start flag (opendbc)"
+CM_ BO_ 1420 "Klemmen_Steuerung_01: Terminal control, ELV (opendbc)"
+CM_ BO_ 987 "Gateway_72: Aggregated BCM/Lock/Wiper status (opendbc)"
+CM_ BO_ 988 "Gateway_73: Transmission, EPB, unknown fields (opendbc)"
+CM_ BO_ 686 "DC-DC Stand ID 0x2AE (1484 frames, not in DBC)"
+CM_ BO_ 1012 "DC-DC Stand ID 0x3F4 (1484 frames, not in DBC)"
+CM_ BO_ 527 "DC-DC Stand ID 0x20F (1459 frames, not in DBC)"
+CM_ BO_ 625 "DC-DC Stand ID 0x271 (731 frames, not in DBC)"
+CM_ BO_ 1467 "DC-DC Stand ID 0x5BB (146 frames, not in DBC)"
+CM_ BO_ 452985017 "DC-DC Stand ID 0x1B0000B9 (367 frames, tester request)"
+CM_ BO_ 399048377 "DC-DC Stand ID 0x17F000B9 (149 frames, variant addr)"
+
+NS_DESC_ Vector__XXX "VW MEB CAN IDs for cantools decoding"
