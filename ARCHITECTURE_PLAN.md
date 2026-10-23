@@ -1,4 +1,4 @@
-# ARCHITECTURAL PLAN: CAN FD VW MEB Simulator
+# ARCHITECTURAL PLAN: CAN FD VW MEB Bus Monitor
 
 ## 1. REPOSITORY STRUCTURE (GitHub)
 
@@ -6,45 +6,27 @@
 vw-meb-canfd-simulator/
 ├── .github/
 │   └── workflows/
-│       └── ci.yml                    # CI: build Zephyr app, lint Python
+│       └── ci.yml                    # CI: lint Python, run tests
 ├── docs/
-│   ├── architecture.md               # Architecture description
-│   ├── canfd_protocol.md             # CAN FD parameters VW MEB
-│   ├── uds_services.md               # UDS services for simulation
-│   └── hardware_setup.md             # Connection diagram, pins
-├── firmware/                         # Zephyr app for MiniSTM32H7xx
-│   ├── CMakeLists.txt
-│   ├── prj.conf
-│   ├── app.overlay
-│   ├── README.md
-│   ├── src/
-│   │   ├── main.c                    # Entry point, initialization
-│   │   ├── can_simulator.c/.h        # ECU simulator logic
-│   │   ├── uds_handler.c/.h          # UDS request handling
-│   │   ├── meb_parameters.c/.h       # PID tables VW MEB (from spot2000/jagheterfredrik)
-│   │   ├── display.c/.h              # ST7735R: "OK" / error output
-│   │   ├── canfd_config.c/.h         # CAN FD config (500k/2M bit/s)
-│   │   └── diagnostics.c/.h          # Self-diagnostics: timeouts, bus-off, CRC errors
-│   └── tests/
-│       └── test_uds_handler.c        # Unit tests (Unity/Zephyr ztest)
-├── host/                             # Python app for PC (Windows 11)
+│   ├── architecture.md               # This architecture description
+│   ├── canfd_protocol.md             # CAN FD parameters VW MEB (500k/2M)
+│   ├── meb_can_ids.md                # Known Extended CAN IDs for MEB ECUs
+│   ├── uds_services.md               # UDS on CAN FD (ISO 14229 / ISO 15765-2)
+│   └── hardware_setup.md             # OBD-II wiring, SLCAN config
+├── host/                             # Python app for PC (Windows 11 / Linux)
 │   ├── requirements.txt
 │   ├── slcan_client.py               # SLCAN protocol over serial (usb2canfdv)
-│   ├── meb_scenarios.py              # Request scenarios: preheat, read PID
-│   ├── logger.py                     # CSV/JSONL logging
-│   ├── cli.py                        # CLI: python -m host.cli --scenario preheat
+│   ├── capture.py                    # Passive CAN FD frame capture + timestamps
+│   ├── analyzer.py                   # Offline analysis: filters, UDS decode, stats
+│   ├── cli.py                        # CLI: python -m host.cli --port COM14 --duration 300
 │   ├── tests/
-│   │   └── test_slcan_client.py      # pytest
+│   │   ├── test_slcan_client.py      # pytest
+│   │   ├── test_capture.py
+│   │   └── test_analyzer.py
 │   └── scripts/
-│       ├── flash_firmware.bat        # west flash / dfu-util / STM32CubeProgrammer
-│       ├── build_firmware.bat        # west build -p always -b mini_stm32h743
-│       ├── monitor_serial.bat        # PuTTY / python -m serial.tools.miniterm
-│       └── run_scenario.bat          # Run scenario + logging
+│       └── run_capture.bat           # Windows wrapper
 ├── hardware/
-│   ├── connection_diagram.md         # CAN-H, CAN-L, GND between boards
-│   └── pinout.md                     # STM32H7 pins: CAN1/2, SPI (LCD), USB
-├── CMakeLists.txt                    # Root (optional, for west workspace)
-├── west.yml                          # Manifest for west (Zephyr + modules)
+│   └── obd2_pinout.md                # OBD-II pins: CAN-H(6), CAN-L(14), GND(4/5)
 ├── README.md                         # General description, quick start
 ├── LICENSE
 └── .gitignore
@@ -52,206 +34,125 @@ vw-meb-canfd-simulator/
 
 ---
 
-## 2. FIRMWARE (MiniSTM32H7xx, Zephyr RTOS)
+## 2. HOST APPLICATION (Windows 11 / Linux, Python 3.11+)
 
-### 2.1 Key Configurations (`prj.conf`)
-```properties
-# Core and console
-CONFIG_STDOUT_CONSOLE=y
-CONFIG_LOG=y
-CONFIG_LOG_MODE_IMMEDIATE=y
-CONFIG_LOG_DEFAULT_LEVEL=3
+### 2.1 Dependencies (`requirements.txt`)
 
-# CAN FD (STM32H7 FDCAN1/2)
-CONFIG_CAN=y
-CONFIG_CAN_FD_MODE=y
-CONFIG_CAN_STM32_FDCAN=y
-CONFIG_CAN_STATISTICS=y
-CONFIG_CAN_FD_MAX_DLC=15
-
-# Display ST7735R (SPI4)
-CONFIG_GPIO=y
-CONFIG_SPI=y
-CONFIG_DISPLAY=y
-CONFIG_ST7735R=y
-CONFIG_HEAP_MEM_POOL_SIZE=16384
-CONFIG_MAIN_STACK_SIZE=4096
-CONFIG_DCACHE=n
-
-# USB Console (CDC ACM) — for debug
-CONFIG_USB_DEVICE_STACK=y
-CONFIG_USB_CDC_ACM=y
-CONFIG_SERIAL=y
-CONFIG_UART_LINE_CTRL=y
-CONFIG_BOARD_SERIAL_BACKEND_CDC_ACM=n
-CONFIG_USB_DEVICE_STACK_NEXT=n
-
-# Scheduler / timers
-CONFIG_MULTITHREADING=y
-CONFIG_NUM_PREEMPT_PRIORITIES=8
-CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC=240000000
-```
-
-### 2.2 DeviceTree Overlay (`app.overlay`)
-```dts
-/ {
-    chosen {
-        zephyr,canbus = &fdcan1;
-        zephyr,display = &st7735r;
-        zephyr,console = &cdc_acm_uart0;
-    };
-};
-
-&fdcan1 {
-    status = "okay";
-    bus-speed = <500000>;       // Arbitration 500 kbps
-    bus-speed-data = <2000000>; // Data 2 Mbps (CAN FD)
-    sample-point = <800>;       // 80%
-    data-sample-point = <750>;  // 75%
-    sjw = <1>;
-    data-sjw = <1>;
-    st,fdcan-tdc-enable;
-    st,fdcan-tdco = <0>;
-    pinctrl-0 = <&fdcan1_pins_a>;
-    pinctrl-names = "default";
-};
-
-&spi4 {
-    status = "okay";
-    pinctrl-0 = <&spi4_pins_a>;
-    pinctrl-names = "default";
-    st7735r: st7735r@0 {
-        compatible = "sitronix,st7735r";
-        reg = <0>;
-        spi-max-frequency = <40000000>;
-        reset-gpios = <&gpioe 10 GPIO_ACTIVE_LOW>;
-        dc-gpios = <&gpioe 11 GPIO_ACTIVE_LOW>;
-        led-gpios = <&gpioe 12 GPIO_ACTIVE_HIGH>;
-        width = <160>;
-        height = <80>;
-        rotation = <90>;
-        rgb-bgr-ordered;
-    };
-};
-```
-
-### 2.3 Module Architecture (C)
-
-| Module | Responsibility |
-|--------|----------------|
-| `main.c` | Init subsystems, launch threads: CAN RX, Display, Diagnostics |
-| `canfd_config.c` | FDCAN setup: filters (Standard/Extended ID), bitrates, TDC |
-| `uds_handler.c` | UDS parsing (ISO 14229): SID 0x10, 0x22, 0x2E, 0x31, 0x3E; NRC |
-| `meb_parameters.c` | Static tables: Battery PID (0x01..0x40), Preheat PID, Charging PID |
-| `can_simulator.c` | State machine: WAIT_REQUEST → PROCESS → SEND_RESPONSE → WAIT; response timeouts |
-| `display.c` | ST7735R: init, render "OK" (green), error (red + code), heartbeat |
-| `diagnostics.c` | Monitoring: Bus-Off, Error Passive, CRC/Stuff/ACK errors, RX timeout counter |
-
-### 2.4 Communication Protocol (CAN FD Frames)
-
-| Direction | CAN ID (Ext) | DLC | Data | Description |
-|-----------|--------------|-----|------|-------------|
-| PC → SIM (Request) | 0x18DAF110 | 8 | `02 22 01 04 00 00 00 00` | UDS ReadDataByIdentifier (Battery Voltage) |
-| SIM → PC (Response) | 0x18DA10F1 | 8 | `06 62 01 04 03 E8 00 00` | Positive Response: 100.0V |
-| PC → SIM (Preheat) | 0x18DAF110 | 8 | `04 31 01 01 01 00 00 00` | RoutineControl: Start Preheat |
-| SIM → PC | 0x18DA10F1 | 8 | `04 71 01 01 00 00 00 00` | RoutineControl Response |
-
-*IDs in VW MEB format (29-bit Extended, SAE J1939-ish). Exact IDs from spot2000/jagheterfredrik repos.*
-
----
-
-## 3. HOST APPLICATION (Windows 11, Python 3.11+)
-
-### 3.1 Dependencies (`requirements.txt`)
 ```
 pyserial>=3.5
 crcmod>=1.7
 pyyaml>=6.0
-rich>=13.0        # TUI logging
+rich>=13.0        # TUI logging, progress bars
+pandas>=2.0       # CSV analysis
 pytest>=7.0
 pytest-mock>=3.12
 ```
 
-### 3.2 Modules
+### 2.2 Modules
 
 | File | Purpose |
 |------|---------|
-| `slcan_client.py` | SLCAN ASCII protocol: `O` (open), `C` (close), `t`/`T` (tx std/ext), `r`/`R` (rx), `\r` termination; handle `~` (timestamp), `\a` (bell/error) |
-| `meb_scenarios.py` | Scenarios: `preheat()`, `read_battery_pids()`, `read_charging_status()`, `custom_uds(sid, did)` |
-| `logger.py` | Write to `logs/YYYYMMDD_HHMMSS.csv` (timestamp, dir, can_id, dlc, data, interpretation) |
-| `cli.py` | Args: `--port COM3 --baud 115200 --scenario preheat --duration 60 --log-dir logs` |
+| `slcan_client.py` | SLCAN ASCII protocol: `O` (open), `C` (close), `t`/`T` (tx std/ext), `r`/`R` (rx), `\r` termination; handle `~` (timestamp), `\a` (bell/error); **RX-only mode** |
+| `capture.py` | Passive capture: open SLCAN, set filters (optional), stream frames to CSV/JSONL with µs timestamps; handle buffer overflow, reconnection |
+| `analyzer.py` | Offline: load CSV → filter by CAN ID range, decode UDS (ISO-TP reassembly), statistics (bus load, error frames, ID frequency), export reports |
+| `cli.py` | Args: `--port COM14 --baud 115200 --duration 300 --output logs/capture.csv --filter "0x18DA*" --silent` |
 
-### 3.3 Windows Scripts (`.bat`)
+### 2.3 Windows Scripts (`.bat`)
 
 ```bat
-:: build_firmware.bat
-cd firmware
-west build -p always -b mini_stm32h743 .
-if errorlevel 1 exit /b 1
-echo Build OK: build/zephyr/zephyr.bin
-
-:: flash_firmware.bat
-cd firmware
-west flash
-if errorlevel 1 (
-    echo "Ignore status 74 if 'Download done' present. Press RESET on board."
-)
+:: run_capture.bat
+cd host
+python -m cli --port %1 --baud 115200 --duration %2 --output logs/capture_%DATE:~6,4%%DATE:~3,2%%DATE:~0,2%_%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%.csv
 ```
 
 ---
 
-## 4. INTEGRATION AND TESTING
+## 3. COMMUNICATION PROTOCOL (CAN FD Frames — VW MEB)
 
-### 4.1 Verification Stages
+### 3.1 CAN FD Bit Timing (MEB Standard)
+
+| Phase | Bitrate | Sample Point | SJW |
+|-------|---------|--------------|-----|
+| Arbitration | 500 kbps | 80% | 1 |
+| Data | 2 Mbps (some ECUs 5 Mbps) | 75% | 1 |
+
+### 3.2 Known MEB Extended CAN IDs (29-bit, SAE J1939-style)
+
+| CAN ID (Hex) | Source ECU | Target | Description |
+|--------------|------------|--------|-------------|
+| `0x18DAF110` | Gateway/Charger | Battery (0x10) | UDS Request (0x22, 0x31, 0x10) |
+| `0x18DA10F1` | Battery (0x10) | Gateway/Charger | UDS Response (0x62, 0x71, 0x50) |
+| `0x18DAF111` | Gateway | Thermal (0x11) | Thermal management UDS |
+| `0x18DA11F1` | Thermal | Gateway | Thermal response |
+| `0x18DAF112` | Gateway | Charging (0x12) | Charging control UDS |
+| `0x18DA12F1` | Charging | Gateway | Charging response |
+| `0x18FEF100` | Gateway | Broadcast | Gateway status / NM |
+| `0x18FF00F1` | Battery | Broadcast | Battery status (SoC, Voltage, Current) |
+| `0x18FF11F1` | Thermal | Broadcast | Thermal status (Temps, Pump, Valve) |
+
+*Exact IDs from spot2000/Volkswagen-MEB-EV-CAN-parameters and jagheterfredrik/meb-preheat.*
+
+### 3.3 UDS on CAN FD (ISO 15765-2)
+
+| SID | Service | Use Case |
+|-----|---------|----------|
+| 0x10 | Diagnostic Session Control | Default (0x01), Extended (0x03), Safety (0x04) |
+| 0x22 | ReadDataByIdentifier | Battery PID (0x0104=Voltage), Thermal PID |
+| 0x2E | WriteDataByIdentifier | Configuration (rare, protected) |
+| 0x31 | RoutineControl | Preheat (0x0101), Battery Heating |
+| 0x3E | TesterPresent | Keep session alive |
+| 0x85 | ControlDTCSetting | DTC on/off |
+
+---
+
+## 4. CAPTURE PIPELINE
+
+```
+Vehicle OBD-II → WeAct USB2CANFDV (SLCAN) → USB/Serial → PC (host/capture.py)
+                                                                    ↓
+                                                         CSV/JSONL: timestamp, dir, can_id, dlc, data[], flags
+                                                                    ↓
+                                                         analyzer.py: filter → ISO-TP reassemble → UDS decode → report
+```
+
+### 4.1 CSV Output Format
+
+```csv
+timestamp_us,direction,can_id_hex,dlc,data_hex,flags
+1729680000123456,RX,18DAF110,8,0222010400000000,
+1729680000124567,RX,18DA10F1,8,0662010403E80000,
+```
+
+### 4.2 Filtering (CLI `--filter`)
+
+- Single ID: `--filter 0x18DAF110`
+- Range: `--filter "0x18DAF110-0x18DAF11F"`
+- Prefix: `--filter "0x18DA*"`
+- Multiple: `--filter 0x18DAF110,0x18DA10F1,0x18FF00F1`
+
+---
+
+## 5. INTEGRATION AND TESTING
+
+### 5.1 Verification Stages
+
 | Stage | Description | Success Criteria |
 |-------|-------------|------------------|
-| 1. Build | `west build` passes | `zephyr.bin` created |
-| 2. Flash | `west flash` → "Download done" | Firmware loaded, manual RESET → boot |
-| 3. Loopback | Connect CAN-H/H, CAN-L/L on one board (USB2CANFDV) | Echo frames returned |
-| 4. Cross-link | Connect two boards with 3 wires | STM32 display: "OK", PC receives responses |
-| 5. Scenario | Run `preheat` scenario 60 sec | 0 CRC errors, all UDS Positive Response |
+| 1. SLCAN Open | `slcan_client.py` opens COM14 @ 115200, sends `O\r` | Receives `\r` (OK) |
+| 2. Passive RX | Listen on vehicle CAN bus (ignition ON) | Frames received, no TX sent |
+| 3. CAN FD Frames | Verify DLC > 8, FD flag in SLCAN (`F` prefix) | DLC 12/16/20/24/32/48/64 captured |
+| 4. Known IDs | Filter `0x18DA*` → UDS traffic visible | Battery/Thermal/Charging IDs present |
+| 5. Long Capture | 5+ min capture, no buffer loss | Sequence numbers continuous, 0 CRC errors |
+| 6. Analysis | `analyzer.py` decodes UDS 0x22/0x62 pairs | Voltage/SoC/Temps extracted correctly |
 
-### 4.2 Diagnostics on STM32 Display
-| State | Text | Background |
-|-------|------|------------|
-| Initialization | `INIT...` | Yellow |
-| Waiting for request | `WAIT REQ` | Blue |
-| Communication OK | `OK` (heartbeat 1s) | Green |
-| RX Timeout | `ERR: RX TO` | Red |
-| Bus-Off | `ERR: BUS OFF` | Red |
-| CRC Error | `ERR: CRC` | Red |
-| UDS NRC | `NRC: 0xXX` | Orange |
+### 5.2 Diagnostics / Monitoring
 
----
-
-## 5. CI / GITHUB ACTIONS
-
-```yaml
-# .github/workflows/ci.yml
-on: [push, pull_request]
-jobs:
-  build-firmware:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Zephyr
-        uses: zephyrproject-rtos/zephyr-build-action@v1
-      - name: Build
-        run: west build -p always -b mini_stm32h743 firmware
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: zephyr-bin
-          path: firmware/build/zephyr/zephyr.bin
-  test-host:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
-      - run: pip install -r host/requirements.txt
-      - run: pytest host/tests -v
-```
+| Metric | Target |
+|--------|--------|
+| Frame rate | Up to ~3000 fps (CAN FD 2M, 64 bytes) |
+| Timestamp resolution | 1 µs (PC) / SLCAN `~` timestamp |
+| Buffer overflow | Zero (non-blocking read, 100ms timeout) |
+| Reconnection | Auto-reconnect on serial disconnect |
 
 ---
 
@@ -259,21 +160,18 @@ jobs:
 
 | # | Task | Output Artifact |
 |---|------|-----------------|
-| 1 | Create GitHub repo `vw-meb-canfd-simulator`, init folder structure | Repo with `.gitignore`, `README.md`, `LICENSE` |
-| 2 | Configure `west.yml` with Zephyr + modules (STM32 HAL, CAN) | `west.yml` |
-| 3 | Create `firmware/` — CMakeLists.txt, prj.conf, app.overlay per schema | Zephyr project skeleton |
-| 4 | Implement `canfd_config.c` — FDCAN1 500k/2M, Ext ID filters | Working CAN init |
-| 5 | Implement `display.c` — ST7735R, status rendering | Display shows "INIT" → "WAIT REQ" |
-| 6 | Implement `meb_parameters.c` — PID tables from spot2000/jagheterfredrik | Data for UDS 0x22 |
-| 7 | Implement `uds_handler.c` — parser SID 0x10/0x22/0x31, response generator | Correct UDS Positive Response |
-| 8 | Implement `can_simulator.c` — main loop: RX → UDS → TX | Echo response to valid requests |
-| 9 | Implement `diagnostics.c` — error counters, Bus-Off detection | Display shows errors |
-| 10 | Create `host/slcan_client.py` — SLCAN over pyserial | Open port, send/receive frames |
-| 11 | Create `host/meb_scenarios.py` — Preheat, Battery Read scenarios | Ready scenarios |
-| 12 | Write `.bat` scripts for build/flash/run | Windows automation |
-| 13 | Integration test: 2 boards, 3 wires, Preheat 60 sec | Error-free log, display "OK" |
-| 14 | Configure CI (GitHub Actions) | Autobuild passes |
-| 15 | Documentation: `docs/architecture.md`, `hardware_setup.md` | Full reproduction guide |
+| 1 | Update repo: rename purpose, update README, ARCHITECTURE_PLAN | This commit |
+| 2 | Create `host/` skeleton: `requirements.txt`, `slcan_client.py` (RX-only) | Working SLCAN open/close |
+| 3 | Implement `capture.py` — streaming capture to CSV with timestamps | `python -m cli --port COM14 --duration 10` writes CSV |
+| 4 | Add CAN FD frame parsing (DLC 9-64, Extended ID) | Correct DLC/data in CSV |
+| 5 | Implement `analyzer.py` — load CSV, filter IDs, ISO-TP reassembly | `python -m analyzer --input capture.csv --filter "0x18DA*"` |
+| 6 | Add UDS decode: 0x22/0x62, 0x31/0x71, 0x10/0x50 | Human-readable output |
+| 7 | Create `docs/meb_can_ids.md` — curated ID table from references | Reference for filtering |
+| 8 | Create `docs/canfd_protocol.md` — MEB bit timing, frame format | Specification |
+| 9 | Create `docs/uds_services.md` — UDS on CAN FD specifics | Reference |
+| 10 | Create `docs/hardware_setup.md` — OBD-II wiring, SLCAN config | Setup guide |
+| 11 | Windows `.bat` wrapper + CI (GitHub Actions: lint + pytest) | Automated checks |
+| 12 | Field test: WeAct on COM14 + VW MEB vehicle (ID.3/ID.4) | Real capture log |
 
 ---
 
@@ -281,19 +179,19 @@ jobs:
 
 | Risk | Mitigation |
 |------|------------|
-| `west flash` status 74 on Windows | Document: ignore if "Download done", manual RESET |
-| CAN FD bit-timing mismatch | Use `canfd_config.c` with exact regs from STM32H7 RM; verify with oscilloscope |
-| SLCAN buffer overflow | `slcan_client.py`: non-blocking read, 100ms timeouts, flow control |
-| Incomplete PID tables | Export from spot2000/jagheterfredrik to JSON → parse in `meb_parameters.c` |
-| Display init fails | Verify `app.overlay` SPI4 pins; `CONFIG_DCACHE=n` mandatory |
+| SLCAN buffer overflow at high bus load | Non-blocking read, dedicated RX thread, 100ms timeout, flow control |
+| Vehicle requires ignition/awake for CAN traffic | Document: ignition ON, or 12V on OBD pin 8 (Ethernet wake) |
+| CAN FD 5 Mbps data phase not supported by WeAct SLCAN | Verify firmware; fallback to 2 Mbps; log data-phase bitrate |
+| UDS ISO-TP multi-frame reassembly complexity | Implement per ISO 15765-2: FC (Flow Control), block size, STmin |
+| Legal/privacy: capturing vehicle data | Disclaimer: own vehicle only, no VIN logging without consent |
 
 ---
 
 ## 8. DEFINITION OF DONE
 
-1. Public GitHub repo, CI green.
-2. `build_firmware.bat` → `flash_firmware.bat` → firmware loads.
-3. Two boards connected with 3 wires.
-4. `python -m host.cli --scenario preheat --duration 60` runs 60 sec error-free.
-5. STM32 display shows constant **green "OK"**.
-6. `logs/` creates CSV with full CAN trace + UDS interpretation.
+1. Public GitHub repo, CI green (lint + pytest).
+2. `python -m host.cli --port COM14 --duration 60 --output test.csv` captures frames.
+3. Captured CSV contains valid CAN FD frames (Extended ID, DLC up to 64).
+4. `python -m analyzer --input test.csv --filter "0x18DA*"` decodes UDS pairs.
+5. Known MEB IDs (Battery 0x18DAF110/0x18DA10F1, Thermal, Charging) visible in capture.
+6. Documentation complete: `docs/*.md` cover setup, IDs, UDS, protocol.
