@@ -55,7 +55,7 @@ pytest-mock>=3.12
 | `slcan_client.py` | SLCAN ASCII protocol: `O` (open), `C` (close), `t`/`T` (tx std/ext), `r`/`R` (rx), `\r` termination; handle `~` (timestamp), `\a` (bell/error); **RX-only mode** |
 | `capture.py` | Passive capture: open SLCAN, set filters (optional), stream frames to CSV/JSONL with µs timestamps; handle buffer overflow, reconnection |
 | `analyzer.py` | Offline: load CSV → filter by CAN ID range, decode UDS (ISO-TP reassembly), statistics (bus load, error frames, ID frequency), export reports |
-| `cli.py` | Args: `--port COM14 --baud 115200 --duration 300 --output logs/capture.csv --filter "0x18DA*" --silent` |
+| `cli.py` | Args: `--port COM14 --baud 115200 --duration 300 --output logs/capture.csv --filter "0x5A2,0x5AC,0x17FC007B,0x3B5,0x3C0" --silent` |
 
 ### 2.3 Windows Scripts (`.bat`)
 
@@ -76,21 +76,26 @@ python -m cli --port %1 --baud 115200 --duration %2 --output logs/capture_%DATE:
 | Arbitration | 500 kbps | 80% | 1 |
 | Data | 2 Mbps (some ECUs 5 Mbps) | 75% | 1 |
 
-### 3.2 Known MEB Extended CAN IDs (29-bit, SAE J1939-style)
+### 3.2 MEB CAN ID Reference
 
-| CAN ID (Hex) | Source ECU | Target | Description |
-|--------------|------------|--------|-------------|
-| `0x18DAF110` | Gateway/Charger | Battery (0x10) | UDS Request (0x22, 0x31, 0x10) |
-| `0x18DA10F1` | Battery (0x10) | Gateway/Charger | UDS Response (0x62, 0x71, 0x50) |
-| `0x18DAF111` | Gateway | Thermal (0x11) | Thermal management UDS |
-| `0x18DA11F1` | Thermal | Gateway | Thermal response |
-| `0x18DAF112` | Gateway | Charging (0x12) | Charging control UDS |
-| `0x18DA12F1` | Charging | Gateway | Charging response |
-| `0x18FEF100` | Gateway | Broadcast | Gateway status / NM |
-| `0x18FF00F1` | Battery | Broadcast | Battery status (SoC, Voltage, Current) |
-| `0x18FF11F1` | Thermal | Broadcast | Thermal status (Temps, Pump, Valve) |
+Полная карта идентификаторов с уровнями достоверности вынесена в отдельный файл:
+**[`docs/meb_can_ids.md`](docs/meb_can_ids.md)**
 
-*Exact IDs from spot2000/Volkswagen-MEB-EV-CAN-parameters and jagheterfredrik/meb-preheat.*
+Краткая сводка ключевых ID для фильтрации при захвате:
+
+| Категория | Примеры CAN ID (Hex) | Формат | Примечание |
+|-----------|----------------------|--------|------------|
+| **Battery (BMS)** — Broadcast | `0x5A2`, `0x5AC`, `0xF7`, `0x503`, `0x16A954A6`, `0x12DD54D2` | 11/29 bit | DBC + логи DCDC-Hacking |
+| **Battery UDS** | Request `0x17FC007B` → Response `0x17FE007B` | 29 bit | 142 параметра (spot2000 CSV) |
+| **Thermal/Climate** — Broadcast | `0x3B5`, `0x668`, `0x5E1`, `0x5E9` | 11 bit | DBC (opendbc) |
+| **Thermal UDS** | Request `0x746` → Response `0x7B0` | 11 bit | Отличается от Battery по битности! |
+| **Charging** — Broadcast | `0x12DD54D0`, `0x1A5555B2` | 29 bit | DBC |
+| **DC-DC** — Broadcast | `0x5CD` | 11 bit | Лог + DBC |
+| **DC-DC UDS** | Request `0x17FC00B9` → Response `0x17FE00B9` | 29 bit | CSV; ODX-адрес `8105` (не CAN ID) |
+| **Gateway / Terminal** | `0x3C0`, `0x58C`, `0x3DB`, `0x3DC` | 11 bit | DBC; `0x3C0` = флаг Remote Start |
+| **DC-DC Stand IDs** (не в DBC, стенд без шлюза) | `0x2AE`, `0x3F4`, `0x20F`, `0x271`, `0x5BB`, `0x1B0000B9`, `0x17F000B9` | 11/29 bit | Только для справки, не на OBD собранной машины |
+
+> **Важно**: Предыдущая таблица с `0x18DAxxxx` — **неверная**, не подтверждена никакими источниками. Используйте `docs/meb_can_ids.md` как эталон.
 
 ### 3.3 UDS on CAN FD (ISO 15765-2)
 
@@ -125,10 +130,10 @@ timestamp_us,direction,can_id_hex,dlc,data_hex,flags
 
 ### 4.2 Filtering (CLI `--filter`)
 
-- Single ID: `--filter 0x18DAF110`
-- Range: `--filter "0x18DAF110-0x18DAF11F"`
-- Prefix: `--filter "0x18DA*"`
-- Multiple: `--filter 0x18DAF110,0x18DA10F1,0x18FF00F1`
+- Single ID: `--filter 0x5A2`
+- Multiple (Battery + Gateway): `--filter 0x5A2,0x5AC,0x17FC007B,0x3C0`
+- All known MEB: `--filter 0x5A2,0x5AC,0xF7,0x503,0x3B5,0x668,0x5E1,0x5E9,0x5CD,0x3C0,0x58C,0x17FC007B,0x17FC00B9,0x746`
+- UDS Request/Response pairs: `--filter 0x17FC007B,0x17FE007B,0x17FC00B9,0x17FE00B9,0x746,0x7B0`
 
 ---
 
@@ -141,7 +146,7 @@ timestamp_us,direction,can_id_hex,dlc,data_hex,flags
 | 1. SLCAN Open | `slcan_client.py` opens COM14 @ 115200, sends `O\r` | Receives `\r` (OK) |
 | 2. Passive RX | Listen on vehicle CAN bus (ignition ON) | Frames received, no TX sent |
 | 3. CAN FD Frames | Verify DLC > 8, FD flag in SLCAN (`F` prefix) | DLC 12/16/20/24/32/48/64 captured |
-| 4. Known IDs | Filter `0x18DA*` → UDS traffic visible | Battery/Thermal/Charging IDs present |
+| 4. Known IDs | Filter per `docs/meb_can_ids.md` → Battery/Thermal/Gateway IDs visible | `0x5A2`, `0x5AC`, `0x3B5`, `0x3C0`, `0x17FC007B` present |
 | 5. Long Capture | 5+ min capture, no buffer loss | Sequence numbers continuous, 0 CRC errors |
 | 6. Analysis | `analyzer.py` decodes UDS 0x22/0x62 pairs | Voltage/SoC/Temps extracted correctly |
 
@@ -192,6 +197,6 @@ timestamp_us,direction,can_id_hex,dlc,data_hex,flags
 1. Public GitHub repo, CI green (lint + pytest).
 2. `python -m host.cli --port COM14 --duration 60 --output test.csv` captures frames.
 3. Captured CSV contains valid CAN FD frames (Extended ID, DLC up to 64).
-4. `python -m analyzer --input test.csv --filter "0x18DA*"` decodes UDS pairs.
-5. Known MEB IDs (Battery 0x18DAF110/0x18DA10F1, Thermal, Charging) visible in capture.
+4. `python -m analyzer --input test.csv --filter "0x5A2,0x5AC,0x17FC007B,0x3B5,0x3C0"` decodes UDS pairs.
+5. Known MEB IDs (Battery `0x5A2`/`0x5AC`/`0x17FC007B`, Thermal `0x3B5`, Gateway `0x3C0`) visible in capture.
 6. Documentation complete: `docs/*.md` cover setup, IDs, UDS, protocol.
